@@ -11,10 +11,12 @@ You will implement the functions in recommender.py:
 
 import os
 
-from recommender import load_songs, recommend_songs, GENRE_MATCH_POINTS, MOOD_MATCH_POINTS, NUMERIC_WEIGHTS
+from recommender import (load_songs, recommend_songs, GENRE_MATCH_POINTS, MOOD_MATCH_POINTS,
+                         MAX_TAG_POINTS, NUMERIC_WEIGHTS)
 
-# Best possible score: full genre and mood match plus full points on every number feature
-MAX_SCORE = GENRE_MATCH_POINTS + MOOD_MATCH_POINTS + sum(weight for weight, _ in NUMERIC_WEIGHTS.values())
+# Best possible score: full genre, mood and tag match plus full points on every number feature
+MAX_SCORE = (GENRE_MATCH_POINTS + MOOD_MATCH_POINTS + MAX_TAG_POINTS
+             + sum(weight for weight, _ in NUMERIC_WEIGHTS.values()))
 
 #FIX: "data/songs.csv" only worked when run from the project root;
 # now the path is built from this file's location, so any folder works.
@@ -107,12 +109,43 @@ ADVERSARIAL_PROFILES = {
     },
 }
 
+# Profiles that use the advanced features (popularity, decade, tags, instrumentalness, explicit)
+ADVANCED_PROFILES = {
+    # Same taste as High-Energy Pop, but clean lyrics only: explicit Gym Hero should drop
+    "Clean Workout Pop": {
+        "favorite_genre": "pop",
+        "favorite_mood": "intense",
+        "target_energy": 0.90,
+        "target_danceability": 0.85,
+        "favorite_tags": ["motivational", "driving"],
+        "allow_explicit": False,
+    },
+    # Older, less mainstream, warm-sounding songs
+    "Nostalgic Deep Cuts": {
+        "favorite_genre": "country",
+        "favorite_mood": "nostalgic",
+        "target_energy": 0.50,
+        "target_popularity": 35,
+        "target_release_decade": 1980,
+        "favorite_tags": ["nostalgic", "warm", "dreamy"],
+    },
+    # Wordless background music for studying
+    "Instrumental Focus": {
+        "favorite_genre": "lofi",
+        "favorite_mood": "focused",
+        "target_energy": 0.35,
+        "target_instrumentalness": 0.95,
+        "favorite_tags": ["focused", "calm", "cozy"],
+        "allow_explicit": False,
+    },
+}
+
 
 def main() -> None:
     songs = load_songs(CSV_PATH)
     print(f"Loaded songs: {len(songs)}")
 
-    for name, user_prefs in {**PROFILES, **ADVERSARIAL_PROFILES}.items():
+    for name, user_prefs in {**PROFILES, **ADVERSARIAL_PROFILES, **ADVANCED_PROFILES}.items():
         recommendations = recommend_songs(user_prefs, songs, k=5)
         print_recommendations(name, user_prefs, recommendations)
 

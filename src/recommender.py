@@ -1,12 +1,20 @@
 import csv
 from typing import List, Dict, Tuple, Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 # Algorithm Recipe weights (see README "How The System Works")
 GENRE_MATCH_POINTS = 2.0
 GENRE_PARTIAL_POINTS = 1.0
 MOOD_MATCH_POINTS = 1.0
 MOOD_CLOSE_POINTS = 0.5
+
+# Detailed mood tags: points per shared tag, capped so tags can't outweigh genre
+TAG_MATCH_POINTS = 0.25
+MAX_TAG_POINTS = 0.75
+
+# Subtracted when the user turns explicit lyrics off
+#FIX: 1.0 left explicit Gym Hero at #1 for a clean-only user; 3.0 cancels a full genre + mood match.
+EXPLICIT_PENALTY = 3.0
 
 # feature -> (max points, scale used to turn the gap into 0-1)
 NUMERIC_WEIGHTS = {
@@ -15,6 +23,9 @@ NUMERIC_WEIGHTS = {
     "danceability": (0.5, 1.0),
     "acousticness": (0.5, 1.0),
     "tempo_bpm": (0.5, 100.0),
+    "popularity": (0.5, 100.0),
+    "release_decade": (0.5, 40.0),
+    "instrumentalness": (0.5, 1.0),
 }
 
 # Moods in the same group earn partial credit for each other
@@ -41,6 +52,12 @@ class Song:
     valence: float
     danceability: float
     acousticness: float
+    # Advanced features; defaults keep older Song(...) calls working
+    popularity: float = 50.0
+    release_decade: int = 2010
+    mood_tags: List[str] = field(default_factory=list)
+    instrumentalness: float = 0.0
+    explicit: bool = False
 
 @dataclass
 class UserProfile:
@@ -75,14 +92,18 @@ def load_songs(csv_path: str) -> List[Dict]:
     Required by src/main.py
     """
     print(f"Loading songs from {csv_path}...")
-    float_fields = ["energy", "tempo_bpm", "valence", "danceability", "acousticness"]
+    float_fields = ["energy", "tempo_bpm", "valence", "danceability", "acousticness",
+                    "popularity", "instrumentalness"]
     songs = []
     with open(csv_path, newline="", encoding="utf-8") as f:
         for row in csv.DictReader(f):
             # csv returns every value as a string; convert numbers so they can be used in math
             row["id"] = int(row["id"])
-            for field in float_fields:
-                row[field] = float(row[field])
+            row["release_decade"] = int(row["release_decade"])
+            for name in float_fields:
+                row[name] = float(row[name])
+            row["mood_tags"] = [tag.strip().lower() for tag in row["mood_tags"].split(";") if tag.strip()]
+            row["explicit"] = row["explicit"].strip().lower() == "true"
             songs.append(row)
     return songs
 
@@ -113,6 +134,19 @@ def score_song(user_prefs: Dict, song: Dict) -> Tuple[float, List[str]]:
     elif any(user_mood in group and song_mood in group for group in MOOD_GROUPS):
         score += MOOD_CLOSE_POINTS
         reasons.append(f"similar mood: {song['mood']} (+{MOOD_CLOSE_POINTS:.1f})")
+
+    # Detailed mood tags: a little credit for each tag the song shares with the user
+    favorite_tags = {tag.lower() for tag in user_prefs.get("favorite_tags", [])}
+    shared_tags = sorted(favorite_tags & set(song["mood_tags"]))
+    if shared_tags:
+        points = min(TAG_MATCH_POINTS * len(shared_tags), MAX_TAG_POINTS)
+        score += points
+        reasons.append(f"shared tags: {'/'.join(shared_tags)} (+{points:.2f})")
+
+    # Explicit lyrics: penalty only when the user has opted out
+    if song["explicit"] and user_prefs.get("allow_explicit", True) is False:
+        score -= EXPLICIT_PENALTY
+        reasons.append(f"explicit lyrics (-{EXPLICIT_PENALTY:.1f})")
 
     # Numeric features: weight * (1 - gap), so closer to the target earns more
     for feature, (weight, scale) in NUMERIC_WEIGHTS.items():
